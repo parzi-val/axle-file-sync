@@ -8,7 +8,7 @@ Make sure you have Go installed. Then, clone the repository and run:
 
 ```
 git clone https://github.com/parzi-val/axle-file-sync
-cd axle
+cd axle-file-sync
 go mod tidy
 ```
 
