@@ -3,10 +3,18 @@ package utils
 import (
 	"fmt"
 	"log"
+	"sync"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 )
 
+// Global list to store changes within a polling window
+var changes []FileChange
+var mu sync.Mutex // To prevent race conditions
+var lastModified = make(map[string]time.Time)
+
+// WatchDirectory watches the specified path for file events
 func WatchDirectory(path string) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -14,7 +22,8 @@ func WatchDirectory(path string) {
 	}
 	defer watcher.Close()
 
-	// Start listening for events
+	fmt.Println("Watching directory:", path)
+
 	go func() {
 		for {
 			select {
@@ -22,18 +31,34 @@ func WatchDirectory(path string) {
 				if !ok {
 					return
 				}
-				fmt.Println("Event:", event)
 
-				// Handle different file events
+				mu.Lock()
+
 				if event.Op&fsnotify.Create == fsnotify.Create {
-					fmt.Println("File Created:", event.Name)
+					changes = append(changes, FileChange{File: event.Name, Event: "created"})
+					fmt.Println(event.Name, "created")
 				} else if event.Op&fsnotify.Write == fsnotify.Write {
-					fmt.Println("File Modified:", event.Name)
+					// Debounce to avoid duplicate writes
+					now := time.Now()
+					if lastTime, exists := lastModified[event.Name]; exists {
+						if now.Sub(lastTime) < 500*time.Millisecond {
+							mu.Unlock()
+							continue
+						}
+					}
+					lastModified[event.Name] = now
+
+					changes = append(changes, FileChange{File: event.Name, Event: "modified"})
+					fmt.Println(event.Name, "modified")
 				} else if event.Op&fsnotify.Remove == fsnotify.Remove {
-					fmt.Println("File Deleted:", event.Name)
+					changes = append(changes, FileChange{File: event.Name, Event: "deleted"})
+					fmt.Println(event.Name, "deleted")
 				} else if event.Op&fsnotify.Rename == fsnotify.Rename {
-					fmt.Println("File Renamed:", event.Name)
+					changes = append(changes, FileChange{File: event.Name, Event: "renamed"})
+					fmt.Println(event.Name, "renamed")
 				}
+
+				mu.Unlock()
 			case err, ok := <-watcher.Errors:
 				if !ok {
 					return
@@ -49,7 +74,41 @@ func WatchDirectory(path string) {
 		log.Fatal(err)
 	}
 
-	// Keep the process running
-	fmt.Println("Watching directory:", path)
-	<-make(chan struct{}) // Block forever
+	// Start polling changes
+	go pollChanges()
+
+	select {} // Block forever
+}
+
+// pollChanges writes changes to a JSON file every 5 seconds
+func pollChanges() {
+	for {
+		time.Sleep(5 * time.Second)
+
+		mu.Lock()
+		if len(changes) == 0 {
+			mu.Unlock()
+			continue
+		}
+
+		// Create metadata
+		metadata := SyncMetadata{
+			Version:   1,
+			Timestamp: time.Now().Unix(),
+			PeerID:    "peer_abc123", // Placeholder, should be dynamically set
+			Changes:   changes,
+		}
+
+		// Save metadata to file
+		err := SaveMetadata(metadata, "sync_metadata.json")
+		if err != nil {
+			log.Println("Error saving metadata:", err)
+		} else {
+			fmt.Println("Sync metadata saved.")
+		}
+
+		// Clear changes after writing
+		changes = nil
+		mu.Unlock()
+	}
 }
