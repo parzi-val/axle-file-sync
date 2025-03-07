@@ -3,26 +3,55 @@ package utils
 import (
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
 )
 
-// Global list to store changes within a polling window
+// Global variables
 var changes []FileChange
-var mu sync.Mutex // To prevent race conditions
-var lastModified = make(map[string]time.Time)
+var mu sync.Mutex
+var lastEventTime = make(map[string]time.Time) // Generic debounce map
 
-// WatchDirectory watches the specified path for file events
-func WatchDirectory(path string) {
+// debounceEvent prevents duplicate events within the debounce window
+func debounceEvent(eventMap map[string]time.Time, key string, debounceTime time.Duration) bool {
+	now := time.Now()
+	if lastTime, exists := eventMap[key]; exists {
+		if now.Sub(lastTime) < debounceTime {
+			return false // Skip duplicate event
+		}
+	}
+	eventMap[key] = now
+	return true // Accept event
+}
+
+// WatchDirectory watches a directory and all subdirectories
+func WatchDirectory(rootPath string) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer watcher.Close()
 
-	fmt.Println("Watching directory:", path)
+	fmt.Println("Watching directory:", rootPath)
+
+	// Recursively add existing directories
+	err = filepath.Walk(rootPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			fmt.Println("Adding watcher to:", path)
+			return watcher.Add(path)
+		}
+		return nil
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	go func() {
 		for {
@@ -35,27 +64,28 @@ func WatchDirectory(path string) {
 				mu.Lock()
 
 				if event.Op&fsnotify.Create == fsnotify.Create {
-					changes = append(changes, FileChange{File: event.Name, Event: "created"})
 					fmt.Println(event.Name, "created")
-				} else if event.Op&fsnotify.Write == fsnotify.Write {
-					// Debounce to avoid duplicate writes
-					now := time.Now()
-					if lastTime, exists := lastModified[event.Name]; exists {
-						if now.Sub(lastTime) < 500*time.Millisecond {
-							mu.Unlock()
-							continue
-						}
-					}
-					lastModified[event.Name] = now
+					changes = append(changes, FileChange{File: event.Name, Event: "created"})
 
-					changes = append(changes, FileChange{File: event.Name, Event: "modified"})
-					fmt.Println(event.Name, "modified")
+					// If a new folder is created, add a watcher to it
+					info, err := os.Stat(event.Name)
+					if err == nil && info.IsDir() {
+						fmt.Println("New folder detected, adding watcher:", event.Name)
+						watcher.Add(event.Name)
+					}
+				} else if event.Op&fsnotify.Write == fsnotify.Write {
+					if debounceEvent(lastEventTime, event.Name, 500*time.Millisecond) {
+						fmt.Println(event.Name, "modified")
+						changes = append(changes, FileChange{File: event.Name, Event: "modified"})
+					}
 				} else if event.Op&fsnotify.Remove == fsnotify.Remove {
-					changes = append(changes, FileChange{File: event.Name, Event: "deleted"})
-					fmt.Println(event.Name, "deleted")
+					if debounceEvent(lastEventTime, event.Name, 500*time.Millisecond) {
+						fmt.Println(event.Name, "deleted")
+						changes = append(changes, FileChange{File: event.Name, Event: "deleted"})
+					}
 				} else if event.Op&fsnotify.Rename == fsnotify.Rename {
-					changes = append(changes, FileChange{File: event.Name, Event: "renamed"})
 					fmt.Println(event.Name, "renamed")
+					changes = append(changes, FileChange{File: event.Name, Event: "renamed"})
 				}
 
 				mu.Unlock()
@@ -67,12 +97,6 @@ func WatchDirectory(path string) {
 			}
 		}
 	}()
-
-	// Watch the specified directory
-	err = watcher.Add(path)
-	if err != nil {
-		log.Fatal(err)
-	}
 
 	// Start polling changes
 	go pollChanges()
