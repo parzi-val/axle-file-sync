@@ -13,10 +13,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/go-redis/redis/v8"
-	// "github.com/rjeczalik/notify"
-
 	"axle/utils"
+
+	"github.com/go-redis/redis/v8"
 )
 
 // ConfigFilePath defines the standard location for the local Axle configuration file.
@@ -24,30 +23,21 @@ const ConfigFileName = "axle_config.json"
 
 // LocalAppConfig represents the configuration stored in a local JSON file.
 type LocalAppConfig struct {
-	TeamID    string `json:"teamID"`
-	Username  string `json:"username"`
-	RootDir   string `json:"rootDir"`
-	RedisHost string `json:"redisHost"`
-	RedisPort int    `json:"redisPort"`
+	TeamID         string   `json:"teamID"`
+	Username       string   `json:"username"`
+	RootDir        string   `json:"rootDir"`
+	RedisHost      string   `json:"redisHost"`
+	RedisPort      int      `json:"redisPort"`
+	IgnorePatterns []string `json:"ignorePatterns"`
 }
 
-// AppConfig holds the application's runtime configuration, derived from LocalAppConfig.
-type AppConfig struct {
-	TeamID      string
-	Username    string
-	RootDir     string
-	RedisAddr   string        // "host:port" string
-	RedisClient *redis.Client // Connected Redis client
-}
-
-var config AppConfig // Global runtime config
+var config utils.AppConfig // Global runtime config
 
 func main() {
 	// --- CLI FlagSet Definitions ---
 	initCmd := flag.NewFlagSet("init", flag.ExitOnError)
 	initTeamIDFlag := initCmd.String("team", "", "Team ID (required)")
 	initUsernameFlag := initCmd.String("username", "", "Username for this Axle instance (required)")
-	initRootDirFlag := initCmd.String("root", ".", "Root directory to sync (default: current directory)")
 	initRedisHostFlag := initCmd.String("host", "localhost", "Redis server host (default: localhost)")
 	initRedisPortFlag := initCmd.Int("port", 6379, "Redis server port (default: 6379)")
 
@@ -75,12 +65,18 @@ func main() {
 			os.Exit(1)
 		}
 
+		rootDir, err := os.Getwd()
+		if err != nil {
+			log.Fatalf("Failed to get current working directory: %v", err)
+		}
+
 		localCfg := LocalAppConfig{
-			TeamID:    *initTeamIDFlag,
-			Username:  *initUsernameFlag,
-			RootDir:   *initRootDirFlag,
-			RedisHost: *initRedisHostFlag,
-			RedisPort: *initRedisPortFlag,
+			TeamID:         *initTeamIDFlag,
+			Username:       *initUsernameFlag,
+			RootDir:        rootDir,
+			RedisHost:      *initRedisHostFlag,
+			RedisPort:      *initRedisPortFlag,
+			IgnorePatterns: []string{".git", ConfigFileName}, // Watcher ignore
 		}
 
 		if err := initAxle(localCfg); err != nil {
@@ -105,6 +101,7 @@ func main() {
 		config.Username = localCfg.Username
 		config.RootDir = localCfg.RootDir
 		config.RedisAddr = fmt.Sprintf("%s:%d", localCfg.RedisHost, localCfg.RedisPort)
+		config.IgnorePatterns = localCfg.IgnorePatterns
 
 		// Initialize Redis client using the address from local config
 		rdb, err := utils.NewRedisClient(config.RedisAddr)
@@ -164,23 +161,28 @@ func printUsage() {
 }
 
 // initAxle initializes the Axle environment.
-// It sets up Git (placeholder) and stores config in a local JSON file.
 func initAxle(localCfg LocalAppConfig) error {
-	// --- Placeholder for Git and local state initialization ---
-	fmt.Printf("Initializing Git repository in %s... (placeholder)\n", localCfg.RootDir)
-	fmt.Println("Creating axle_local_state.json... (placeholder)")
-	// --- End of Placeholder ---
+	// --- Initialize Git Repository ---
+	if err := utils.InitGitRepo(localCfg.RootDir); err != nil {
+		return fmt.Errorf("failed to initialize Git repository: %w", err)
+	}
+	fmt.Println("Git repository initialized successfully.")
 
-	// Store configuration in a local JSON file
-	filePath := filepath.Join(localCfg.RootDir, ConfigFileName) // Store in the rootDir
-	// Alternatively, store in a user's home directory like:
-	// configDir := filepath.Join(os.Getenv("HOME"), ".axle")
-	// if err := os.MkdirAll(configDir, 0755); err != nil {
-	// 	return fmt.Errorf("failed to create config directory: %w", err)
-	// }
-	// filePath = filepath.Join(configDir, ConfigFileName)
+	// --- Add config to local git exclude file ---
+	excludePath := filepath.Join(localCfg.RootDir, ".git", "info", "exclude")
+	f, err := os.OpenFile(excludePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open .git/info/exclude: %w", err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString("\n" + ConfigFileName + "\n"); err != nil {
+		return fmt.Errorf("failed to write to .git/info/exclude: %w", err)
+	}
+	fmt.Println("Added config file to .git/info/exclude.")
 
-	jsonData, err := json.MarshalIndent(localCfg, "", "  ") // Pretty print JSON
+	// --- Store configuration in a local JSON file ---
+	filePath := filepath.Join(localCfg.RootDir, ConfigFileName)
+	jsonData, err := json.MarshalIndent(localCfg, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal local config to JSON: %w", err)
 	}
@@ -193,16 +195,9 @@ func initAxle(localCfg LocalAppConfig) error {
 
 // loadConfigFromFile reads the LocalAppConfig from the local JSON file.
 func loadConfigFromFile() (LocalAppConfig, error) {
-	// First, try to find the config file in the current working directory
-	// (assuming Axle commands are run from the project root)
-	filePath := filepath.Join(".", ConfigFileName) // Current directory
-
-	// Alternatively, if you want a system-wide config:
-	// configDir := filepath.Join(os.Getenv("HOME"), ".axle")
-	// filePath = filepath.Join(configDir, ConfigFileName)
-
+	filePath := filepath.Join(".", ConfigFileName)
 	jsonData, err := os.ReadFile(filePath)
-	if err != nil {
+		if err != nil {
 		return LocalAppConfig{}, fmt.Errorf("failed to read config file %s: %w", filePath, err)
 	}
 
@@ -214,37 +209,12 @@ func loadConfigFromFile() (LocalAppConfig, error) {
 }
 
 // startAxle starts the main Axle synchronization and chat processes.
-func startAxle(ctx context.Context, cfg AppConfig) {
+func startAxle(ctx context.Context, cfg utils.AppConfig) {
 	// 1. Start the file system watcher
-	// watcherEvents, err := utils.StartFileWatcher(cfg.RootDir)
-	// if err != nil {
-	// 	log.Fatalf("Failed to start file watcher: %v", err)
-	// }
-
-	// var wg sync.WaitGroup
-	// wg.Add(1)
-	// go func() {
-	// 	defer wg.Done()
-	// 	for ev := range watcherEvents {
-	// 		// Placeholder for actual file event handling
-	// 		fmt.Printf("[FS_EVENT] %s: %s\n", ev.Event(), ev.Path())
-	// 		// In a real scenario, you'd call utils.HandleFileEvent here,
-	// 		// get SyncMetadata, and publish it to Redis.
-	// 		// syncMeta, err := utils.HandleFileEvent(ev, cfg.RootDir)
-	// 		// if err != nil {
-	// 		//    log.Printf("Error processing file event: %v", err)
-	// 		//    continue
-	// 		// }
-	// 		// // Marshal syncMeta and publish to Redis team channel
-	// 		// err = utils.PublishMessage(ctx, cfg.RedisClient, fmt.Sprintf("axle:team:%s", cfg.TeamID), syncMeta)
-	// 		// if err != nil {
-	// 		//   log.Printf("Error publishing sync message: %v", err)
-	// 		// }
-	// 	}
-	// }()
+	go utils.WatchDirectory(cfg)
 
 	// 2. Start the Redis subscriber (in a goroutine)
-	go startRedisSubscriber(ctx, cfg.TeamID, cfg.RedisClient) // Removed username as it's in AppConfig.Username
+	go startRedisSubscriber(ctx, cfg)
 
 	// 3. Handle OS signals for graceful shutdown
 	sigCh := make(chan os.Signal, 1)
@@ -255,10 +225,6 @@ func startAxle(ctx context.Context, cfg AppConfig) {
 	// 4. Main event loop: wait for a shutdown signal
 	<-sigCh
 	fmt.Println("\nShutting down Axle...")
-
-	// // Perform graceful shutdown:
-	// notify.Stop(watcherEvents) // This stops the notify goroutine and closes the channel
-	// wg.Wait()                  // Wait for the file watcher goroutine to finish processing remaining events
 
 	// Close Redis connection
 	if cfg.RedisClient != nil {
@@ -275,7 +241,7 @@ func publishChatMessage(ctx context.Context, teamID, username, messageContent st
 		Timestamp: time.Now().Unix(),
 	}
 
-	chatChannel := fmt.Sprintf("axle:chat:%s", teamID)
+	chatChannel := fmt.Sprintf("axle:team:%s", teamID)
 	err := utils.PublishMessage(ctx, rdb, chatChannel, msg)
 	if err != nil {
 		log.Printf("Error publishing chat message to Redis: %v", err)
@@ -285,16 +251,15 @@ func publishChatMessage(ctx context.Context, teamID, username, messageContent st
 }
 
 // startRedisSubscriber subscribes to Redis channels and processes messages.
-func startRedisSubscriber(ctx context.Context, teamID string, rdb *redis.Client) {
+func startRedisSubscriber(ctx context.Context, cfg utils.AppConfig) {
 	defer log.Println("Redis subscriber stopped.")
 
-	// Subscribe to both chat and team synchronization channels
 	channels := []string{
-		fmt.Sprintf("axle:team:%s", teamID),
-		fmt.Sprintf("axle:chat:%s", teamID),
+		fmt.Sprintf("axle:team:%s", cfg.TeamID),
+		fmt.Sprintf("axle:chat:%s", cfg.TeamID),
 	}
 
-	pubsub, err := utils.SubscribeToChannels(ctx, rdb, channels...)
+	pubsub, err := utils.SubscribeToChannels(ctx, cfg.RedisClient, channels...)
 	if err != nil {
 		log.Printf("Failed to subscribe to Redis channels: %v", err)
 		return
@@ -307,20 +272,61 @@ func startRedisSubscriber(ctx context.Context, teamID string, rdb *redis.Client)
 		select {
 		case msg := <-ch:
 			switch msg.Channel {
-			case fmt.Sprintf("axle:team:%s", teamID):
-				// This is a file synchronization message
-				fmt.Printf("[SYNC] From channel '%s': %s\n", msg.Channel, msg.Payload)
+			case fmt.Sprintf("axle:team:%s", cfg.TeamID):
+				var syncMeta utils.SyncMetadata
+				if err := json.Unmarshal([]byte(msg.Payload), &syncMeta); err != nil {
+					log.Printf("Error unmarshaling sync metadata: %v", err)
+					continue
+				}
 
-			case fmt.Sprintf("axle:chat:%s", teamID):
-				// This is a chat message
+				if syncMeta.PeerID == cfg.Username {
+					continue
+				}
+
+				fmt.Printf("[SYNC] Received sync from %s\n", syncMeta.PeerID)
+
+				for _, change := range syncMeta.Changes {
+					// Handle Patches (Create/Modify)
+					if change.Patch != "" {
+						utils.SetIsApplyingPatch(true)
+						if err := utils.ApplyPatch(cfg.RootDir, change.Patch); err != nil {
+							log.Printf("Error applying patch: %v", err)
+						}
+						time.Sleep(100 * time.Millisecond) // Brief pause for FS events
+						utils.SetIsApplyingPatch(false)
+						continue // Continue to next change
+					}
+
+					// Handle Deletion
+					if change.Event == "deleted" {
+						// Construct the absolute path of the file to be deleted on the local system
+						localPathToDelete := filepath.Join(cfg.RootDir, change.File)
+
+						// Mute watcher during deletion
+						utils.SetIsApplyingPatch(true)
+						log.Printf("Attempting to delete: %s", localPathToDelete)
+						err := os.RemoveAll(localPathToDelete) // Use RemoveAll to handle files and directories
+						if err != nil {
+							// Check if the error is because the file is already gone
+							if !os.IsNotExist(err) {
+								log.Printf("Error deleting file/directory %s: %v", localPathToDelete, err)
+							}
+						} else {
+							log.Printf("Successfully deleted: %s", localPathToDelete)
+						}
+						// Un-mute watcher
+						time.Sleep(100 * time.Millisecond) // Brief pause for FS events
+						utils.SetIsApplyingPatch(false)
+					}
+				}
+
+			case fmt.Sprintf("axle:chat:%s", cfg.TeamID):
 				var chatMsg utils.ChatMessage
 				if err := json.Unmarshal([]byte(msg.Payload), &chatMsg); err != nil {
 					log.Printf("Error unmarshaling chat message: %v", err)
 					continue
 				}
 				fmt.Printf("[CHAT %s] <%s> %s\n", time.Unix(chatMsg.Timestamp, 0).Format("15:04:05"), chatMsg.Sender, chatMsg.Message)
-			default:
-				fmt.Printf("Received unexpected message from channel '%s': %s\n", msg.Channel, msg.Payload)
 			}
 		case <-ctx.Done():
 			return

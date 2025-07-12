@@ -1,7 +1,0 @@
-{
-  "teamID": "myteam",
-  "username": "alice",
-  "rootDir": ".",
-  "redisHost": "localhost",
-  "redisPort": 6379
-}

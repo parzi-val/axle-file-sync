@@ -7,12 +7,12 @@ import (
 
 // Struct for individual file changes
 type FileChange struct {
-	File         string `json:"file"`
-	Event        string `json:"event"`
-	Hash         string `json:"hash,omitempty"`          // Omit if empty
-	Delta        string `json:"delta,omitempty"`         // Base64-encoded XOR diff
-	FileSize     int64  `json:"file_size,omitempty"`     // Omit if empty
-	PreviousHash string `json:"previous_hash,omitempty"` // Omit if empty
+	File        string `json:"file"`
+	Event       string `json:"event"`
+	CommitHash  string `json:"commit_hash,omitempty"`
+	Patch       string `json:"patch,omitempty"`
+	NewBlobID   string `json:"new_blob_id,omitempty"`
+	PrevBlobID  string `json:"prev_blob_id,omitempty"`
 }
 
 // Struct for batch sync metadata
