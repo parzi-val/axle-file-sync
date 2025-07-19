@@ -2,7 +2,6 @@ package utils
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -21,6 +20,11 @@ var (
 	lastEventTime   = make(map[string]time.Time) // Generic debounce map
 	muApplyingPatch sync.Mutex
 	isApplyingPatch bool
+	// Batching variables
+	pendingFiles  = make(map[string]string) // file path -> event type
+	batchTimer    *time.Timer
+	batchMutex    sync.Mutex
+	batchDuration = 2 * time.Second // Wait 2 seconds to accumulate changes
 )
 
 // SetIsApplyingPatch sets the state of the patch application flag.
@@ -29,11 +33,6 @@ func SetIsApplyingPatch(state bool) {
 	muApplyingPatch.Lock()
 	defer muApplyingPatch.Unlock()
 	isApplyingPatch = state
-	if state {
-		log.Println("Watcher is now muted for patch application.")
-	} else {
-		log.Println("Watcher is now active.")
-	}
 }
 
 func getIsApplyingPatch() bool {
@@ -56,12 +55,90 @@ func debounceEvent(eventMap map[string]time.Time, key string, debounceTime time.
 
 // isIgnored checks if a path should be ignored.
 func isIgnored(path string, ignorePatterns []string) bool {
+	// Always ignore .git folder and its contents
+	if strings.Contains(path, ".git") {
+		return true
+	}
+
 	for _, pattern := range ignorePatterns {
 		if strings.Contains(path, pattern) {
 			return true
 		}
 	}
 	return false
+}
+
+// processBatch processes accumulated file changes and commits them as a batch
+func processBatch(cfg AppConfig) {
+	batchMutex.Lock()
+	defer batchMutex.Unlock()
+
+	if len(pendingFiles) == 0 {
+		return
+	}
+
+	// Create commit message based on changes
+	var commitMessage string
+	if len(pendingFiles) == 1 {
+		for path, event := range pendingFiles {
+			commitMessage = fmt.Sprintf("%s %s", strings.Title(event), path)
+			break
+		}
+	} else {
+		commitMessage = fmt.Sprintf("Batch update: %d files changed", len(pendingFiles))
+	}
+
+	// Commit all changes at once
+	commitHash, err := CommitChanges(cfg.RootDir, commitMessage)
+	if err != nil {
+		log.Printf("Error committing batched changes: %v", err)
+		pendingFiles = make(map[string]string) // Clear pending files even on error
+		return
+	}
+
+	if commitHash != "" {
+		// Generate patch for the commit
+		patch, err := GetPatch(cfg.RootDir, commitHash)
+		if err != nil {
+			log.Printf("Error getting patch for batched commit: %v", err)
+		} else {
+			// Create file changes for all files in the batch
+			mu.Lock()
+			for path, event := range pendingFiles {
+				changes = append(changes, FileChange{
+					File:       path,
+					Event:      event,
+					CommitHash: commitHash,
+					Patch:      patch,
+				})
+			}
+			mu.Unlock()
+		}
+	}
+
+	// Clear pending files
+	pendingFiles = make(map[string]string)
+
+	// Reset timer
+	batchTimer = nil
+}
+
+// addToBatch adds a file change to the pending batch and starts/resets the timer
+func addToBatch(cfg AppConfig, filePath, eventType string) {
+	batchMutex.Lock()
+	defer batchMutex.Unlock()
+
+	// Add to pending files (this will overwrite if the same file has multiple events)
+	pendingFiles[filePath] = eventType
+
+	// Reset the timer
+	if batchTimer != nil {
+		batchTimer.Stop()
+	}
+
+	batchTimer = time.AfterFunc(batchDuration, func() {
+		processBatch(cfg)
+	})
 }
 
 // WatchDirectory watches a directory and all subdirectories
@@ -72,7 +149,7 @@ func WatchDirectory(cfg AppConfig) {
 	}
 	defer watcher.Close()
 
-	fmt.Println("Watching directory:", cfg.RootDir)
+	log.Printf("[WATCHER] Watching directory: %s", cfg.RootDir)
 
 	// Recursively add existing directories
 	err = filepath.Walk(cfg.RootDir, func(path string, info os.FileInfo, err error) error {
@@ -83,7 +160,6 @@ func WatchDirectory(cfg AppConfig) {
 			if isIgnored(path, cfg.IgnorePatterns) {
 				return filepath.SkipDir
 			}
-			fmt.Println("Adding watcher to:", path)
 			return watcher.Add(path)
 		}
 		return nil
@@ -101,7 +177,6 @@ func WatchDirectory(cfg AppConfig) {
 				}
 
 				if getIsApplyingPatch() {
-					log.Printf("Skipping event for %s due to ongoing patch application\n", event.Name)
 					continue
 				}
 
@@ -116,84 +191,54 @@ func WatchDirectory(cfg AppConfig) {
 					continue
 				}
 
-				mu.Lock()
-
 				if event.Op&fsnotify.Create == fsnotify.Create {
 					if debounceEvent(lastEventTime, event.Name, 500*time.Millisecond) {
-						fmt.Println(relPath, "created")
-						commitHash, err := CommitChanges(cfg.RootDir, fmt.Sprintf("Created %s", relPath))
-						if err != nil {
-							log.Println("Error committing changes:", err)
-						} else if commitHash != "" {
-							patch, err := GetPatch(cfg.RootDir, commitHash)
-							if err != nil {
-								log.Println("Error getting patch:", err)
-							} else {
-								changes = append(changes, FileChange{File: relPath, Event: "created", CommitHash: commitHash, Patch: patch})
-							}
-						}
-					}
-					// Check if the created path is a directory. If so, walk it and add all subdirectories to the watcher.
-					info, err := os.Stat(event.Name)
-					if err == nil && info.IsDir() {
-						err := filepath.Walk(event.Name, func(path string, fi os.FileInfo, err error) error {
-							if err != nil {
-								return err
-							}
-							if fi.IsDir() {
-								if isIgnored(path, cfg.IgnorePatterns) {
-									return filepath.SkipDir
-								}
-								log.Printf("Adding watcher to new subdirectory: %s", path)
-								err = watcher.Add(path)
+						addToBatch(cfg, relPath, "created")
+
+						// Check if the created path is a directory. If so, walk it and add all subdirectories to the watcher.
+						info, err := os.Stat(event.Name)
+						if err == nil && info.IsDir() {
+							err := filepath.Walk(event.Name, func(path string, fi os.FileInfo, err error) error {
 								if err != nil {
-									log.Printf("Failed to add watcher to %s: %v", path, err)
+									return err
 								}
+								if fi.IsDir() {
+									if isIgnored(path, cfg.IgnorePatterns) {
+										return filepath.SkipDir
+									}
+									err = watcher.Add(path)
+									if err != nil {
+									}
+								}
+								return nil
+							})
+							if err != nil {
 							}
-							return nil
-						})
-						if err != nil {
-							log.Printf("Error walking new directory %s: %v", event.Name, err)
 						}
 					}
 				} else if event.Op&fsnotify.Write == fsnotify.Write {
 					if debounceEvent(lastEventTime, event.Name, 500*time.Millisecond) {
-						fmt.Println(relPath, "modified")
-						commitHash, err := CommitChanges(cfg.RootDir, fmt.Sprintf("Modified %s", relPath))
-						if err != nil {
-							log.Println("Error committing changes:", err)
-						} else if commitHash != "" {
-							patch, err := GetPatch(cfg.RootDir, commitHash)
-							if err != nil {
-								log.Println("Error getting patch:", err)
-							} else {
-								changes = append(changes, FileChange{File: relPath, Event: "modified", CommitHash: commitHash, Patch: patch})
-							}
-						}
+						addToBatch(cfg, relPath, "modified")
 					}
 				} else if event.Op&fsnotify.Remove == fsnotify.Remove {
 					if debounceEvent(lastEventTime, event.Name, 500*time.Millisecond) {
-						fmt.Println(relPath, "deleted")
-						changes = append(changes, FileChange{File: relPath, Event: "deleted"})
+						addToBatch(cfg, relPath, "deleted")
 					}
 				} else if event.Op&fsnotify.Rename == fsnotify.Rename {
 					// On rename, fsnotify might remove the old path from the watcher.
 					// We might need to re-add the new path if it's a directory.
 					info, err := os.Stat(event.Name)
 					if err == nil && info.IsDir() {
-						log.Printf("Re-adding watcher to renamed directory: %s", event.Name)
 						watcher.Add(event.Name)
 					}
-					fmt.Println(relPath, "renamed")
-					changes = append(changes, FileChange{File: relPath, Event: "renamed"})
+					addToBatch(cfg, relPath, "renamed")
 				}
 
-				mu.Unlock()
 			case err, ok := <-watcher.Errors:
 				if !ok {
 					return
 				}
-				fmt.Println("Error:", err)
+				log.Printf("[WATCHER] Error: %v", err)
 			}
 		}
 	}()
@@ -223,25 +268,16 @@ func pollChanges(cfg AppConfig) {
 			Changes:   changes,
 		}
 
-		// Log the metadata before publishing
-		metadataJSON, err := json.MarshalIndent(metadata, "", "  ")
-		if err != nil {
-			log.Println("Error marshaling metadata for logging:", err)
-		} else {
-			log.Printf("Publishing SyncMetadata:\n%s\n", string(metadataJSON))
-		}
-
 		// Publish metadata to Redis
 		ctx := context.Background()
 		channel := fmt.Sprintf("axle:team:%s", cfg.TeamID)
 		if err := PublishMessage(ctx, cfg.RedisClient, channel, metadata); err != nil {
 			log.Println("Error publishing metadata to Redis:", err)
-		} else {
-			fmt.Println("Sync metadata published to Redis.")
 		}
 
-		// Clear changes after publishing
-		changes = nil
-		mu.Unlock()
+	// Clear changes after publishing
+	changes = nil
+	mu.Unlock()
+		log.Printf("[SYNC] Published batch with %d changes to team %s", len(metadata.Changes), cfg.TeamID)
 	}
 }

@@ -110,7 +110,7 @@ func main() {
 		}
 		config.RedisClient = rdb // Assign to global config
 
-		fmt.Printf("Starting Axle for team '%s' as user '%s' in '%s'.\n", config.TeamID, config.Username, config.RootDir)
+		log.Printf("[AXLE] Starting for team '%s' as user '%s' in '%s'", config.TeamID, config.Username, config.RootDir)
 		startAxle(ctx, config) // Pass context and config
 
 	case "chat":
@@ -220,17 +220,17 @@ func startAxle(ctx context.Context, cfg utils.AppConfig) {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	fmt.Println("Axle started. Watching for file changes and listening for chat messages. Press Ctrl+C to stop.")
+	log.Println("[AXLE] Started. Watching for file changes and listening for chat messages. Press Ctrl+C to stop.")
 
 	// 4. Main event loop: wait for a shutdown signal
 	<-sigCh
-	fmt.Println("\nShutting down Axle...")
+	log.Println("[AXLE] Shutting down...")
 
 	// Close Redis connection
 	if cfg.RedisClient != nil {
 		cfg.RedisClient.Close()
 	}
-	fmt.Println("Axle shutdown complete.")
+	log.Println("[AXLE] Shutdown complete")
 }
 
 // publishChatMessage publishes a chat message to the Redis channel.
@@ -247,7 +247,7 @@ func publishChatMessage(ctx context.Context, teamID, username, messageContent st
 		log.Printf("Error publishing chat message to Redis: %v", err)
 		return
 	}
-	fmt.Printf("Chat message sent by %s to '%s': %s\n", username, chatChannel, messageContent)
+	log.Printf("[CHAT] Message sent by %s: %s", username, messageContent)
 }
 
 // startRedisSubscriber subscribes to Redis channels and processes messages.
@@ -283,17 +283,19 @@ func startRedisSubscriber(ctx context.Context, cfg utils.AppConfig) {
 					continue
 				}
 
-				fmt.Printf("[SYNC] Received sync from %s\n", syncMeta.PeerID)
 
+				// Track changed files for committing
+				var changedFiles []string
+				utils.SetIsApplyingPatch(true)
+				
 				for _, change := range syncMeta.Changes {
 					// Handle Patches (Create/Modify)
 					if change.Patch != "" {
-						utils.SetIsApplyingPatch(true)
 						if err := utils.ApplyPatch(cfg.RootDir, change.Patch); err != nil {
-							log.Printf("Error applying patch: %v", err)
+							log.Printf("[SYNC] Error applying patch: %v", err)
+						} else {
+							changedFiles = append(changedFiles, change.File)
 						}
-						time.Sleep(100 * time.Millisecond) // Brief pause for FS events
-						utils.SetIsApplyingPatch(false)
 						continue // Continue to next change
 					}
 
@@ -302,23 +304,30 @@ func startRedisSubscriber(ctx context.Context, cfg utils.AppConfig) {
 						// Construct the absolute path of the file to be deleted on the local system
 						localPathToDelete := filepath.Join(cfg.RootDir, change.File)
 
-						// Mute watcher during deletion
-						utils.SetIsApplyingPatch(true)
-						log.Printf("Attempting to delete: %s", localPathToDelete)
 						err := os.RemoveAll(localPathToDelete) // Use RemoveAll to handle files and directories
 						if err != nil {
 							// Check if the error is because the file is already gone
 							if !os.IsNotExist(err) {
-								log.Printf("Error deleting file/directory %s: %v", localPathToDelete, err)
+								log.Printf("[SYNC] Error deleting file/directory %s: %v", localPathToDelete, err)
 							}
 						} else {
-							log.Printf("Successfully deleted: %s", localPathToDelete)
+							changedFiles = append(changedFiles, change.File)
 						}
-						// Un-mute watcher
-						time.Sleep(100 * time.Millisecond) // Brief pause for FS events
-						utils.SetIsApplyingPatch(false)
 					}
 				}
+				
+				// Auto-stage and commit synced changes
+				if len(changedFiles) > 0 {
+					commitMessage := fmt.Sprintf("[SYNC] Received %d changes from %s", len(changedFiles), syncMeta.PeerID)
+					if _, err := utils.CommitChanges(cfg.RootDir, commitMessage); err != nil {
+						log.Printf("[SYNC] Error committing synced changes: %v", err)
+					} else {
+						log.Printf("[SYNC] Applied and committed %d changes from %s", len(changedFiles), syncMeta.PeerID)
+					}
+				}
+				
+				time.Sleep(100 * time.Millisecond) // Brief pause for FS events
+				utils.SetIsApplyingPatch(false)
 
 			case fmt.Sprintf("axle:chat:%s", cfg.TeamID):
 				var chatMsg utils.ChatMessage

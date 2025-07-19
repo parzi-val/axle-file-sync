@@ -27,7 +27,7 @@ func NewRedisClient(addr string) (*redis.Client, error) {
 		rdb.Close() // Close the client if ping fails
 		return nil, fmt.Errorf("failed to connect to Redis at %s: %w", addr, err)
 	}
-	log.Printf("Successfully connected to Redis at %s\n", addr)
+	log.Printf("[REDIS] Connected to %s", addr)
 	return rdb, nil
 }
 
@@ -42,7 +42,6 @@ func PublishMessage(ctx context.Context, rdb *redis.Client, channel string, mess
 	if err != nil {
 		return fmt.Errorf("failed to publish message to channel %s: %w", channel, err)
 	}
-	// log.Printf("Published message to '%s': %s\n", channel, string(jsonMessage)) // Log for debugging
 	return nil
 }
 
@@ -55,6 +54,6 @@ func SubscribeToChannels(ctx context.Context, rdb *redis.Client, channels ...str
 		pubsub.Close() // Ensure pubsub is closed on error
 		return nil, fmt.Errorf("failed to subscribe to channels %v: %w", channels, err)
 	}
-	log.Printf("Successfully subscribed to Redis channels: %v\n", channels)
+	log.Printf("[REDIS] Subscribed to channels: %v", channels)
 	return pubsub, nil
 }

@@ -89,13 +89,68 @@ func GetPatch(directory, commitHash string) (string, error) {
 
 // ApplyPatch applies a patch to the repository.
 func ApplyPatch(directory, patch string) error {
-	cmd := exec.Command("git", "-C", directory, "apply", "-")
-	cmd.Stdin = strings.NewReader(patch)
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to apply patch: %s", out.String())
+	// First clean up any previous git am/rebase state
+	abortCmd := exec.Command("git", "-C", directory, "am", "--abort")
+	abortCmd.Run() // Ignore errors - this is cleanup
+	
+	rebaseAbortCmd := exec.Command("git", "-C", directory, "rebase", "--abort")
+	rebaseAbortCmd.Run() // Ignore errors - this is cleanup
+	
+	// Check if this is a format-patch style patch (has "From" header)
+	isFormatPatch := strings.Contains(patch, "From ") && strings.Contains(patch, "Subject:")
+	
+	if isFormatPatch {
+		// For format-patch style patches, use git am with ignore flags
+		cmd := exec.Command("git", "-C", directory, "am", "--whitespace=nowarn", "--ignore-whitespace", "--3way")
+		cmd.Stdin = strings.NewReader(patch)
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = &out
+		
+		if err := cmd.Run(); err != nil {
+			// If git am fails due to existing files, try to reset and apply again
+			if strings.Contains(out.String(), "would be overwritten") || strings.Contains(out.String(), "already exists") {
+				// Reset to clean state and try again
+				resetCmd := exec.Command("git", "-C", directory, "reset", "--hard", "HEAD")
+				resetCmd.Run()
+				
+				cleanCmd := exec.Command("git", "-C", directory, "clean", "-fd")
+				cleanCmd.Run()
+				
+				// Try git am again
+				cmd2 := exec.Command("git", "-C", directory, "am", "--whitespace=nowarn", "--ignore-whitespace", "--3way")
+				cmd2.Stdin = strings.NewReader(patch)
+				var out2 bytes.Buffer
+				cmd2.Stdout = &out2
+				cmd2.Stderr = &out2
+				
+				if err2 := cmd2.Run(); err2 != nil {
+					return fmt.Errorf("failed to apply format-patch after reset:\nFirst attempt: %s\nSecond attempt: %s", out.String(), out2.String())
+				}
+			} else {
+				return fmt.Errorf("failed to apply format-patch: %s", out.String())
+			}
+		}
+	} else {
+		// For regular diff patches, use git apply
+		cmd := exec.Command("git", "-C", directory, "apply", "--whitespace=nowarn", "--index", "--reject", "-")
+		cmd.Stdin = strings.NewReader(patch)
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = &out
+		
+		if err := cmd.Run(); err != nil {
+			// If that fails, try with --3way for better conflict resolution
+			cmd2 := exec.Command("git", "-C", directory, "apply", "--whitespace=nowarn", "--3way", "-")
+			cmd2.Stdin = strings.NewReader(patch)
+			var out2 bytes.Buffer
+			cmd2.Stdout = &out2
+			cmd2.Stderr = &out2
+			
+			if err2 := cmd2.Run(); err2 != nil {
+				return fmt.Errorf("failed to apply diff patch:\nMethod 1 (apply --whitespace=nowarn --index --reject): %s\nMethod 2 (apply --whitespace=nowarn --3way): %s", out.String(), out2.String())
+			}
+		}
 	}
 	return nil
 }
