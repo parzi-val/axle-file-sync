@@ -95,6 +95,13 @@ func processBatch(cfg AppConfig) {
 		pendingFiles = make(map[string]string) // Clear pending files even on error
 		return
 	}
+	
+	// If no commit hash, it means there was nothing to commit
+	if commitHash == "" {
+		log.Printf("[BATCH] No changes to commit for batch (working tree was already clean)")
+		pendingFiles = make(map[string]string)
+		return
+	}
 
 	if commitHash != "" {
 		// Generate patch for the commit
@@ -141,8 +148,43 @@ func addToBatch(cfg AppConfig, filePath, eventType string) {
 	})
 }
 
+// ForceProcessPendingBatch processes any pending batch changes before shutdown
+func ForceProcessPendingBatch(cfg AppConfig) {
+	batchMutex.Lock()
+	defer batchMutex.Unlock()
+	
+	if len(pendingFiles) > 0 {
+		log.Printf("[SHUTDOWN] Processing %d pending changes before exit", len(pendingFiles))
+		processBatch(cfg)
+	}
+}
+
+// CleanupWatcherState clears all global watcher state
+func CleanupWatcherState() {
+	mu.Lock()
+	defer mu.Unlock()
+	
+	batchMutex.Lock()
+	defer batchMutex.Unlock()
+	
+	// Clear all state
+	changes = nil
+	lastEventTime = make(map[string]time.Time)
+	pendingFiles = make(map[string]string)
+	
+	// Stop any running timer
+	if batchTimer != nil {
+		batchTimer.Stop()
+		batchTimer = nil
+	}
+	
+	log.Println("[SHUTDOWN] Cleared watcher state")
+}
+
 // WatchDirectory watches a directory and all subdirectories
-func WatchDirectory(cfg AppConfig) {
+func WatchDirectory(ctx context.Context, cfg AppConfig) {
+	defer log.Println("[WATCHER] File watcher stopped")
+	
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		log.Fatal(err)
@@ -239,45 +281,54 @@ func WatchDirectory(cfg AppConfig) {
 					return
 				}
 				log.Printf("[WATCHER] Error: %v", err)
+			case <-ctx.Done():
+				return
 			}
 		}
 	}()
 
 	// Start polling changes
-	go pollChanges(cfg)
+	go pollChanges(ctx, cfg)
 
-	select {} // Block forever
+	// Block until context is cancelled
+	<-ctx.Done()
 }
 
 // pollChanges writes changes to a JSON file and publishes to Redis every 5 seconds
-func pollChanges(cfg AppConfig) {
+func pollChanges(ctx context.Context, cfg AppConfig) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	
 	for {
-		time.Sleep(5 * time.Second)
+		select {
+		case <-ticker.C:
+			mu.Lock()
+			if len(changes) == 0 {
+				mu.Unlock()
+				continue
+			}
 
-		mu.Lock()
-		if len(changes) == 0 {
+			// Create metadata
+			metadata := SyncMetadata{
+				Version:   1,
+				Timestamp: time.Now().Unix(),
+				PeerID:    cfg.Username, // Use username from config
+				Changes:   changes,
+			}
+
+			// Publish metadata to Redis
+			channel := fmt.Sprintf("axle:team:%s", cfg.TeamID)
+			if err := PublishMessage(ctx, cfg.RedisClient, channel, metadata); err != nil {
+				log.Println("Error publishing metadata to Redis:", err)
+			} else {
+				log.Printf("[SYNC] Published batch with %d changes to team %s", len(metadata.Changes), cfg.TeamID)
+			}
+
+			// Clear changes after publishing
+			changes = nil
 			mu.Unlock()
-			continue
+		case <-ctx.Done():
+			return
 		}
-
-		// Create metadata
-		metadata := SyncMetadata{
-			Version:   1,
-			Timestamp: time.Now().Unix(),
-			PeerID:    cfg.Username, // Use username from config
-			Changes:   changes,
-		}
-
-		// Publish metadata to Redis
-		ctx := context.Background()
-		channel := fmt.Sprintf("axle:team:%s", cfg.TeamID)
-		if err := PublishMessage(ctx, cfg.RedisClient, channel, metadata); err != nil {
-			log.Println("Error publishing metadata to Redis:", err)
-		}
-
-	// Clear changes after publishing
-	changes = nil
-	mu.Unlock()
-		log.Printf("[SYNC] Published batch with %d changes to team %s", len(metadata.Changes), cfg.TeamID)
 	}
 }

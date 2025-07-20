@@ -210,11 +210,15 @@ func loadConfigFromFile() (LocalAppConfig, error) {
 
 // startAxle starts the main Axle synchronization and chat processes.
 func startAxle(ctx context.Context, cfg utils.AppConfig) {
+	// Create a cancellable context for coordinated shutdown
+	appCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	// 1. Start the file system watcher
-	go utils.WatchDirectory(cfg)
+	go utils.WatchDirectory(appCtx, cfg)
 
 	// 2. Start the Redis subscriber (in a goroutine)
-	go startRedisSubscriber(ctx, cfg)
+	go startRedisSubscriber(appCtx, cfg)
 
 	// 3. Handle OS signals for graceful shutdown
 	sigCh := make(chan os.Signal, 1)
@@ -224,12 +228,26 @@ func startAxle(ctx context.Context, cfg utils.AppConfig) {
 
 	// 4. Main event loop: wait for a shutdown signal
 	<-sigCh
-	log.Println("[AXLE] Shutting down...")
+	log.Println("[AXLE] Shutdown signal received. Gracefully shutting down...")
+
+	// Cancel all contexts to signal goroutines to stop
+	cancel()
+
+	// Give goroutines time to clean up
+	log.Println("[AXLE] Waiting for goroutines to finish...")
+	time.Sleep(2 * time.Second)
+
+	// Clean up any remaining batch processing
+	utils.ForceProcessPendingBatch(cfg)
 
 	// Close Redis connection
 	if cfg.RedisClient != nil {
 		cfg.RedisClient.Close()
 	}
+
+	// Clear any remaining mutex state
+	utils.CleanupWatcherState()
+
 	log.Println("[AXLE] Shutdown complete")
 }
 
@@ -288,13 +306,18 @@ func startRedisSubscriber(ctx context.Context, cfg utils.AppConfig) {
 				var changedFiles []string
 				utils.SetIsApplyingPatch(true)
 				
+				var autoCommittedAny bool
 				for _, change := range syncMeta.Changes {
 					// Handle Patches (Create/Modify)
 					if change.Patch != "" {
-						if err := utils.ApplyPatch(cfg.RootDir, change.Patch); err != nil {
+						autoCommitted, err := utils.ApplyPatch(cfg.RootDir, change.Patch)
+						if err != nil {
 							log.Printf("[SYNC] Error applying patch: %v", err)
 						} else {
 							changedFiles = append(changedFiles, change.File)
+							if autoCommitted {
+								autoCommittedAny = true
+							}
 						}
 						continue // Continue to next change
 					}
@@ -316,14 +339,19 @@ func startRedisSubscriber(ctx context.Context, cfg utils.AppConfig) {
 					}
 				}
 				
-				// Auto-stage and commit synced changes
-				if len(changedFiles) > 0 {
+				// Auto-stage and commit synced changes (only if not auto-committed by git am)
+				if len(changedFiles) > 0 && !autoCommittedAny {
 					commitMessage := fmt.Sprintf("[SYNC] Received %d changes from %s", len(changedFiles), syncMeta.PeerID)
+					log.Printf("[SYNC] Attempting to commit %d changed files: %v", len(changedFiles), changedFiles)
+					
 					if _, err := utils.CommitChanges(cfg.RootDir, commitMessage); err != nil {
-						log.Printf("[SYNC] Error committing synced changes: %v", err)
+						log.Printf("[SYNC] Error committing synced changes in directory '%s': %v", cfg.RootDir, err)
+						log.Printf("[SYNC] Failed files were: %v", changedFiles)
 					} else {
 						log.Printf("[SYNC] Applied and committed %d changes from %s", len(changedFiles), syncMeta.PeerID)
 					}
+				} else if autoCommittedAny {
+					log.Printf("[SYNC] Applied and committed %d changes from %s (auto-committed by git am)", len(changedFiles), syncMeta.PeerID)
 				}
 				
 				time.Sleep(100 * time.Millisecond) // Brief pause for FS events

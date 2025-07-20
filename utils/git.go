@@ -46,12 +46,37 @@ func CommitChanges(directory, message string) (string, error) {
 	commitCmd.Stderr = &stderr
 
 	if err := commitCmd.Run(); err != nil {
+		stdErrStr := stderr.String()
+		stdOutStr := out.String()
+		
 		// If commit fails because there's nothing to commit, it's not a fatal error.
 		// We return an empty hash to signify that no new patch should be generated.
-		if strings.Contains(stderr.String(), "nothing to commit") || strings.Contains(stderr.String(), "no changes added to commit") {
-			return "", nil
+		// Check both stderr and stdout for the "nothing to commit" message
+		if strings.Contains(stdErrStr, "nothing to commit") || 
+		   strings.Contains(stdErrStr, "no changes added to commit") ||
+		   strings.Contains(stdOutStr, "nothing to commit") ||
+		   strings.Contains(stdOutStr, "working tree clean") {
+			return "", nil // Not an error - just nothing to commit
 		}
-		return "", fmt.Errorf("failed to commit changes: %s", stderr.String())
+		
+		// Provide detailed error information
+		errorDetails := fmt.Sprintf("Git commit failed - Exit Code: %v", err)
+		if stdErrStr != "" {
+			errorDetails += fmt.Sprintf("\nStderr: %s", stdErrStr)
+		}
+		if stdOutStr != "" {
+			errorDetails += fmt.Sprintf("\nStdout: %s", stdOutStr)
+		}
+		
+		// Check git status to provide more context
+		statusCmd := exec.Command("git", "-C", directory, "status", "--porcelain")
+		if statusOutput, statusErr := statusCmd.CombinedOutput(); statusErr == nil {
+			errorDetails += fmt.Sprintf("\nGit Status: %s", string(statusOutput))
+		} else {
+			errorDetails += fmt.Sprintf("\nFailed to get git status: %v", statusErr)
+		}
+		
+		return "", fmt.Errorf("failed to commit changes: %s", errorDetails)
 	}
 
 	// Get the commit hash of the new commit
@@ -88,7 +113,8 @@ func GetPatch(directory, commitHash string) (string, error) {
 
 
 // ApplyPatch applies a patch to the repository.
-func ApplyPatch(directory, patch string) error {
+// Returns (autoCommitted bool, error) where autoCommitted indicates if the patch was auto-committed by git am.
+func ApplyPatch(directory, patch string) (bool, error) {
 	// First clean up any previous git am/rebase state
 	abortCmd := exec.Command("git", "-C", directory, "am", "--abort")
 	abortCmd.Run() // Ignore errors - this is cleanup
@@ -125,12 +151,14 @@ func ApplyPatch(directory, patch string) error {
 				cmd2.Stderr = &out2
 				
 				if err2 := cmd2.Run(); err2 != nil {
-					return fmt.Errorf("failed to apply format-patch after reset:\nFirst attempt: %s\nSecond attempt: %s", out.String(), out2.String())
+					return true, fmt.Errorf("failed to apply format-patch after reset:\nFirst attempt: %s\nSecond attempt: %s", out.String(), out2.String())
 				}
 			} else {
-				return fmt.Errorf("failed to apply format-patch: %s", out.String())
+				return true, fmt.Errorf("failed to apply format-patch: %s", out.String())
 			}
 		}
+		// git am was successful, return true for autoCommitted since git am commits automatically
+		return true, nil
 	} else {
 		// For regular diff patches, use git apply
 		cmd := exec.Command("git", "-C", directory, "apply", "--whitespace=nowarn", "--index", "--reject", "-")
@@ -148,9 +176,10 @@ func ApplyPatch(directory, patch string) error {
 			cmd2.Stderr = &out2
 			
 			if err2 := cmd2.Run(); err2 != nil {
-				return fmt.Errorf("failed to apply diff patch:\nMethod 1 (apply --whitespace=nowarn --index --reject): %s\nMethod 2 (apply --whitespace=nowarn --3way): %s", out.String(), out2.String())
+				return false, fmt.Errorf("failed to apply diff patch:\nMethod 1 (apply --whitespace=nowarn --index --reject): %s\nMethod 2 (apply --whitespace=nowarn --3way): %s", out.String(), out2.String())
 			}
 		}
+		// git apply was successful, return false for autoCommitted since git apply doesn't commit
+		return false, nil
 	}
-	return nil
 }
