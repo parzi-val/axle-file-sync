@@ -18,6 +18,24 @@ type AxleConfig struct {
 	RootDir  string `json:"rootDir"`
 }
 
+// PresenceInfo represents information about a team member's presence
+type PresenceInfo struct {
+	Username    string `json:"username"`
+	Status      string `json:"status"`       // "online" or "offline"
+	LastSeen    int64  `json:"lastSeen"`     // Unix timestamp
+	IPAddress   string `json:"ipAddress"`    // IP address of the node
+	NodeID      string `json:"nodeID"`       // Unique identifier for this node instance
+}
+
+// PresenceMessage represents presence-related messages
+type PresenceMessage struct {
+	Type      string      `json:"type"`      // "heartbeat", "announce", "goodbye"
+	NodeID    string      `json:"nodeID"`    // Unique identifier for this node
+	Username  string      `json:"username"`  // Username of the sender
+	IPAddress string      `json:"ipAddress"` // IP address
+	Timestamp int64       `json:"timestamp"` // Unix timestamp
+}
+
 // AppConfig holds the application's runtime configuration.
 type AppConfig struct {
 	TeamID         string
@@ -26,4 +44,5 @@ type AppConfig struct {
 	RedisAddr      string
 	RedisClient    *redis.Client
 	IgnorePatterns []string
+	NodeID         string // Unique identifier for this node instance
 }

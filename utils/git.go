@@ -7,15 +7,6 @@ import (
 	"strings"
 )
 
-// InitGitRepo initializes a Git repository in the specified directory if not already initialized.
-func InitGitRepo(directory string) error {
-	cmd := exec.Command("git", "-C", directory, "init")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("failed to initialize Git repo: %w\n%s", err, string(output))
-	}
-	return nil
-}
 
 // GetGitDiff retrieves the Git diff for a given file.
 func GetGitDiff(filePath string) (string, error) {
@@ -111,6 +102,39 @@ func GetPatch(directory, commitHash string) (string, error) {
 	return string(output), nil
 }
 
+
+// InitGitRepo initializes a Git repository in the specified directory
+func InitGitRepo(directory string) error {
+	cmd := exec.Command("git", "-C", directory, "init")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to initialize git repository: %s", stderr.String())
+	}
+
+	// Check if this is a fresh repo and add an initial commit
+	statusCmd := exec.Command("git", "-C", directory, "status", "--porcelain")
+	_, err := statusCmd.Output()
+	if err != nil {
+		return fmt.Errorf("failed to check git status: %v", err)
+	}
+
+	// If there are no commits yet, create an initial empty commit
+	logCmd := exec.Command("git", "-C", directory, "log", "--oneline", "-n", "1")
+	if err := logCmd.Run(); err != nil {
+		// No commits exist, create initial commit
+		initialCommitCmd := exec.Command("git", "-C", directory, "commit", "--allow-empty", "-m", "Initial commit")
+		var commitStderr bytes.Buffer
+		initialCommitCmd.Stderr = &commitStderr
+
+		if err := initialCommitCmd.Run(); err != nil {
+			return fmt.Errorf("failed to create initial commit: %s", commitStderr.String())
+		}
+	}
+
+	return nil
+}
 
 // ApplyPatch applies a patch to the repository.
 // Returns (autoCommitted bool, error) where autoCommitted indicates if the patch was auto-committed by git am.
