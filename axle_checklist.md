@@ -12,12 +12,13 @@
 
 - [x] Batch git operations: Collect changes for 2 seconds before committing
 - [ ] Add Redis connection pooling
-- [ ] Optimize file watching: Skip temporary/swap files (.tmp, .swp, ~)
+- [x] Optimize file watching: Skip temporary/swap files (.tmp, .swp, ~)
 - [ ] Add file size limits to prevent syncing huge files
 - [ ] Implement delta sync for large files
 
 ## Security Enhancements
 
+- [x] Add team password protection with `init` and `join` commands
 - [ ] Add authentication: JWT tokens or API keys for team access
 - [ ] Validate incoming patches: Check format and dangerous operations
 - [ ] Add rate limiting: Prevent spam/DOS from malicious peers
@@ -34,6 +35,7 @@
 
 ## User Experience
 
+- [x] Persist Node-ID to prevent duplicate users in team status
 - [ ] Add progress indicators for large sync operations
 - [x] Implement file exclusion patterns (like .gitignore)
 - [ ] Add sync status dashboard/CLI command
@@ -55,3 +57,7 @@
 - [ ] Add CI/CD pipeline with automated testing
 - [ ] Write API documentation
 - [ ] Add troubleshooting guide
+
+## Future Features
+
+- [ ] Implement "force sync" for Git-ignored files: Add an `includePatterns` option to sync files that are in `.gitignore` (e.g., `.env` files). This would require a custom, non-Git patching mechanism.

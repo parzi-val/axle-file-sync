@@ -55,13 +55,20 @@ func debounceEvent(eventMap map[string]time.Time, key string, debounceTime time.
 
 // isIgnored checks if a path should be ignored.
 func isIgnored(path string, ignorePatterns []string) bool {
+	fileName := filepath.Base(path)
+
 	// Always ignore .git folder and its contents
-	if strings.Contains(path, ".git") {
+	if fileName == ".git" || strings.Contains(path, ".git"+string(filepath.Separator)) {
+		return true
+	}
+
+	// Ignore temporary/swap files
+	if strings.HasSuffix(fileName, ".tmp") || strings.HasSuffix(fileName, ".swp") || strings.HasSuffix(fileName, "~") {
 		return true
 	}
 
 	for _, pattern := range ignorePatterns {
-		if strings.Contains(path, pattern) {
+		if matched, _ := filepath.Match(pattern, fileName); matched {
 			return true
 		}
 	}

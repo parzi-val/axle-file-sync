@@ -1,5 +1,5 @@
 # PowerShell script to automatically setup test environment for Axle
-# Clears alice_project and bob_project folders and initializes them with Axle
+# Clears alice_project and bob_project folders
 
 param()
 
@@ -42,39 +42,23 @@ Write-Host "Creating fresh directories..." -ForegroundColor Yellow
 New-Item -ItemType Directory -Force -Path $AliceDir | Out-Null
 New-Item -ItemType Directory -Force -Path $BobDir | Out-Null
 
-# Initialize Alice's project
-Write-Host "Initializing Alice's project..." -ForegroundColor Cyan
-Set-Location $AliceDir
-& "..\axle.exe" init --team "dev-team" --username "alice"
-
-Write-Host "Alice's project initialized successfully!" -ForegroundColor Green
-
-# Initialize Bob's project  
-Write-Host "Initializing Bob's project..." -ForegroundColor Cyan
-Set-Location "..\$BobDir"
-& "..\axle.exe" init --team "dev-team" --username "bob"
-
-Write-Host "Bob's project initialized successfully!" -ForegroundColor Green
-
 # Go back to tests directory
 Set-Location $ScriptDir
 
 Write-Host ""
-Write-Host "✅ Test environment setup complete!" -ForegroundColor Green
+Write-Host "✅ Test environment cleaned up!
+" -ForegroundColor Green
 Write-Host ""
 Write-Host "Next steps:" -ForegroundColor White
-Write-Host "1. Start Alice: cd alice_project && ..\axle.exe start"
-Write-Host "2. Start Bob: cd bob_project && ..\axle.exe start"
+Write-Host "1. Team Lead (Alice) initializes the team:"
+Write-Host "   cd testing_utils/alice_project"
+Write-Host "   ../axle.exe init --team \"dev-team\" --username \"alice\""
 Write-Host ""
-Write-Host "Directory structure:" -ForegroundColor White
-Write-Host "tests/"
-Write-Host "  |-- axle.exe"
-Write-Host "  |-- setup-test-env.ps1 (this script)"
-Write-Host "  |-- setup-test-env.sh (bash version)"
-Write-Host "  |-- alice_project/"
-Write-Host "  |   |-- .git/"
-Write-Host "  |   '-- axle_config.json"
-Write-Host "  '-- bob_project/"
-Write-Host "      |-- .git/"
-Write-Host "      '-- axle_config.json"
+Write-Host "2. Team Member (Bob) joins the team:"
+Write-Host "   cd testing_utils/bob_project"
+Write-Host "   ../axle.exe join --team \"dev-team\" --username \"bob\""
+Write-Host ""
+Write-Host "3. Start both clients:"
+Write-Host "   - In one terminal, from alice_project: ../axle.exe start"
+Write-Host "   - In another terminal, from bob_project: ../axle.exe start"
 Write-Host ""

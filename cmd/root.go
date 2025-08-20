@@ -56,19 +56,23 @@ func Execute() {
 	}
 }
 
-// loadConfig loads the configuration from the local JSON file
+// loadConfig loads the configuration from the local JSON file and ensures a persistent NodeID.
 func loadConfig() error {
 	localCfg, err := loadConfigFromFile()
 	if err != nil {
 		return err
 	}
 
-	// Generate unique node ID if not present
-	if config.NodeID == "" {
-		config.NodeID = utils.GenerateNodeID()
+	// Generate and save unique node ID if not present
+	if localCfg.NodeID == "" {
+		localCfg.NodeID = utils.GenerateNodeID()
+		if err := saveConfigToFile(localCfg); err != nil {
+			return fmt.Errorf("failed to save updated config with new NodeID: %w", err)
+		}
 	}
 
 	// Populate global runtime config from loaded local config
+	config.NodeID = localCfg.NodeID
 	config.TeamID = localCfg.TeamID
 	config.Username = localCfg.Username
 	config.RootDir = localCfg.RootDir
@@ -89,6 +93,7 @@ func loadConfig() error {
 type LocalAppConfig struct {
 	TeamID         string   `json:"teamID"`
 	Username       string   `json:"username"`
+	NodeID         string   `json:"nodeID"`
 	RootDir        string   `json:"rootDir"`
 	RedisHost      string   `json:"redisHost"`
 	RedisPort      int      `json:"redisPort"`
@@ -111,4 +116,18 @@ func loadConfigFromFile() (LocalAppConfig, error) {
 		return LocalAppConfig{}, fmt.Errorf("failed to unmarshal config JSON from %s: %w", filePath, err)
 	}
 	return localCfg, nil
+}
+
+// saveConfigToFile saves the LocalAppConfig to the local JSON file.
+func saveConfigToFile(localCfg LocalAppConfig) error {
+	filePath := filepath.Join(".", ConfigFileName)
+	jsonData, err := json.MarshalIndent(localCfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal local config to JSON: %w", err)
+	}
+
+	if err := os.WriteFile(filePath, jsonData, 0644); err != nil {
+		return fmt.Errorf("failed to write local config to file %s: %w", filePath, err)
+	}
+	return nil
 }

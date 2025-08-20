@@ -47,19 +47,29 @@ go build -o axle.exe
 redis-server
 ```
 
-2. **Initialize Axle** with your team and username:
+2. **Initialize a new team**:
 
 ```bash
 ./axle.exe init --team <team-name> --username <username>
 ```
 
-3. **Start Axle Daemon**:
+You will be prompted to create a password for the team. Alternatively, you can provide it with the `--password` flag.
+
+3. **Have team members join**:
+
+Other team members can join by running:
+```bash
+./axle.exe join --team <team-name> --username <other-username>
+```
+They will be prompted for the team password.
+
+4. **Start Axle Daemon**:
 
 ```bash
 ./axle.exe start
 ```
 
-4. **Send chat messages** to your team (optional):
+5. **Send chat messages** to your team (optional):
 
 ```bash
 ./axle.exe chat "Your message here"
