@@ -29,14 +29,16 @@ You will be prompted for the team password.`,
 			return fmt.Errorf("both --team and --username flags are required")
 		}
 
-		// Prompt for password
-		fmt.Print("Enter the team password: ")
-		bytePassword, err := term.ReadPassword(int(syscall.Stdin))
-		if err != nil {
-			return fmt.Errorf("failed to read password: %w", err)
+		// Prompt for password if not provided as flag
+		if password == "" {
+			fmt.Print("Enter the team password: ")
+			bytePassword, err := term.ReadPassword(int(syscall.Stdin))
+			if err != nil {
+				return fmt.Errorf("failed to read password: %w", err)
+			}
+			password = string(bytePassword)
+			fmt.Println()
 		}
-		password := string(bytePassword)
-		fmt.Println()
 
 		fmt.Println(utils.RenderTitle("🤝 Joining Axle Team"))
 
@@ -147,6 +149,7 @@ func init() {
 	// Add flags
 	joinCmd.Flags().StringVar(&teamID, "team", "", "Team ID (required)")
 	joinCmd.Flags().StringVar(&username, "username", "", "Username for this Axle instance (required)")
+	joinCmd.Flags().StringVar(&password, "password", "", "Team password")
 	joinCmd.Flags().StringVar(&redisHost, "host", "localhost", "Redis server host")
 	joinCmd.Flags().IntVar(&redisPort, "port", 6379, "Redis server port")
 

@@ -1,3 +1,11 @@
 builds/
 *.exe
 .env
+
+# Testing directories (nested git repos)
+testing_utils/alice/
+testing_utils/bob/
+testing_utils/alice_project/
+testing_utils/bob_project/
+testing_utils/*.log
+axle_config.json

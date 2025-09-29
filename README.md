@@ -96,7 +96,7 @@ Axle supports ignoring specific files and directories through configurable patte
 
 Multiple users can collaborate on the same project by:
 
-1. Using the same **Team ID**
+1. Using the same **Team ID**k
 2. Connecting to the same **Redis server**
 3. Working in directories with the same **Git repository structure**
 

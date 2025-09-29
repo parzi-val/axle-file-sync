@@ -97,6 +97,19 @@ func initAxleRepo(localCfg LocalAppConfig, password string) error {
 	}
 	fmt.Println(utils.RenderSuccess("done"))
 
+	// Auto-detect stack and configure gitignore
+	fmt.Print("Detecting project stack and configuring .gitignore... ")
+	ignorePatterns := utils.AutoConfigureGitignore(localCfg.RootDir)
+	localCfg.IgnorePatterns = ignorePatterns
+
+	// Write .gitignore file
+	if err := utils.WriteGitignore(localCfg.RootDir, ignorePatterns); err != nil {
+		fmt.Println(utils.RenderWarning("warning"))
+		fmt.Printf("  Could not create .gitignore: %v\n", err)
+	} else {
+		fmt.Println(utils.RenderSuccess("done"))
+	}
+
 	// Add config to local git exclude file
 	fmt.Print("Configuring Git exclusions... ")
 	excludePath := filepath.Join(localCfg.RootDir, ".git", "info", "exclude")

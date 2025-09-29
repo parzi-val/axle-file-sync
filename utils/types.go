@@ -37,11 +37,12 @@ type PresenceMessage struct {
 
 // AppConfig holds the application's runtime configuration.
 type AppConfig struct {
-	TeamID         string
-	Username       string
-	RootDir        string
-	RedisAddr      string
-	RedisClient    *redis.Client
-	IgnorePatterns []string
-	NodeID         string // Unique identifier for this node instance
+	TeamID           string
+	Username         string
+	RootDir          string
+	RedisAddr        string
+	RedisClient      *redis.Client
+	IgnorePatterns   []string
+	NodeID           string           // Unique identifier for this node instance
+	ConflictStrategy ConflictStrategy // Strategy for handling merge conflicts
 }

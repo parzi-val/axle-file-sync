@@ -17,6 +17,10 @@ import (
 	"axle/utils"
 )
 
+var (
+	conflictMode string // Flag for conflict resolution strategy
+)
+
 // startCmd represents the start command
 var startCmd = &cobra.Command{
 	Use:	"start",
@@ -72,6 +76,21 @@ All team members running 'axle start' will be synchronized in real-time.`,
 			config.TeamID, config.Username, config.RootDir)
 		fmt.Println(utils.RenderInfo("Press Ctrl+C to stop"))
 		fmt.Println("")
+
+		// Validate conflict mode
+		strategy := utils.ConflictStrategy(conflictMode)
+		switch strategy {
+		case utils.ConflictStrategyTheirs, utils.ConflictStrategyMine,
+			utils.ConflictStrategyMerge, utils.ConflictStrategyBackup,
+			utils.ConflictStrategyInteractive:
+			// Valid strategy
+			fmt.Printf("Conflict resolution mode: %s\n", conflictMode)
+		default:
+			return fmt.Errorf("invalid conflict mode: %s (use: theirs, mine, merge, backup, or interactive)", conflictMode)
+		}
+
+		// Store conflict strategy in config for use in handleSyncMessage
+		config.ConflictStrategy = strategy
 
 		// Start Axle with presence tracking
 		startAxleWithPresence(ctx, config)
@@ -189,7 +208,16 @@ func handleSyncMessage(cfg utils.AppConfig, payload string) {
 	for _, change := range syncMeta.Changes {
 		// Handle Patches (Create/Modify)
 		if change.Patch != "" {
-			autoCommitted, err := utils.ApplyPatch(cfg.RootDir, change.Patch)
+			var autoCommitted bool
+			var err error
+
+			// Use conflict strategy if available
+			if cfg.ConflictStrategy != "" {
+				autoCommitted, err = utils.ApplyPatchWithStrategy(cfg.RootDir, change.Patch, cfg.ConflictStrategy)
+			} else {
+				autoCommitted, err = utils.ApplyPatch(cfg.RootDir, change.Patch)
+			}
+
 			if err != nil {
 				log.Printf("[SYNC] Error applying patch: %v", err)
 			} else {
@@ -246,4 +274,8 @@ func handleChatMessage(payload string) {
 
 func init() {
 	rootCmd.AddCommand(startCmd)
+
+	// Add conflict resolution flag
+	startCmd.Flags().StringVar(&conflictMode, "conflict", "merge",
+		"Conflict resolution strategy: theirs, mine, merge, backup, or interactive")
 }

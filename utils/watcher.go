@@ -18,13 +18,20 @@ var (
 	changes         []FileChange
 	mu              sync.Mutex
 	lastEventTime   = make(map[string]time.Time) // Generic debounce map
+	eventTimeMutex  sync.RWMutex                  // Mutex for lastEventTime map
 	muApplyingPatch sync.Mutex
 	isApplyingPatch bool
 	// Batching variables
 	pendingFiles  = make(map[string]string) // file path -> event type
 	batchTimer    *time.Timer
 	batchMutex    sync.Mutex
-	batchDuration = 2 * time.Second // Wait 2 seconds to accumulate changes
+	batchDuration = 5 * time.Second // Wait 5 seconds to accumulate changes (increased for testing)
+	// File size limits
+	maxFileSize int64 = 10 * 1024 * 1024 // 10MB default, can be configured
+	// Dynamic batching
+	recentEventCount int                    // Track recent events for dynamic batching
+	lastEventReset   = time.Now()           // When we last reset the event counter
+	dynamicBatchMux  sync.RWMutex           // Mutex for dynamic batch variables
 )
 
 // SetIsApplyingPatch sets the state of the patch application flag.
@@ -43,6 +50,9 @@ func getIsApplyingPatch() bool {
 
 // debounceEvent prevents duplicate events within the debounce window
 func debounceEvent(eventMap map[string]time.Time, key string, debounceTime time.Duration) bool {
+	eventTimeMutex.Lock()
+	defer eventTimeMutex.Unlock()
+
 	now := time.Now()
 	if lastTime, exists := eventMap[key]; exists {
 		if now.Sub(lastTime) < debounceTime {
@@ -51,6 +61,19 @@ func debounceEvent(eventMap map[string]time.Time, key string, debounceTime time.
 	}
 	eventMap[key] = now
 	return true // Accept event
+}
+
+// cleanupOldEventTimes removes entries older than 5 minutes from lastEventTime map
+func cleanupOldEventTimes() {
+	eventTimeMutex.Lock()
+	defer eventTimeMutex.Unlock()
+
+	cutoff := time.Now().Add(-5 * time.Minute)
+	for key, timestamp := range lastEventTime {
+		if timestamp.Before(cutoff) {
+			delete(lastEventTime, key)
+		}
+	}
 }
 
 // isIgnored checks if a path should be ignored.
@@ -75,11 +98,68 @@ func isIgnored(path string, ignorePatterns []string) bool {
 	return false
 }
 
+// shouldSkipFile checks if a file should be skipped based on size or other criteria
+func shouldSkipFile(path string) (bool, string) {
+	// Check if path exists and get file info
+	fileInfo, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, "" // File doesn't exist (might be deleted), don't skip
+		}
+		return true, fmt.Sprintf("cannot stat file: %v", err)
+	}
+
+	// Skip directories (they're handled separately)
+	if fileInfo.IsDir() {
+		return false, ""
+	}
+
+	// Check file size
+	if fileInfo.Size() > maxFileSize {
+		return true, fmt.Sprintf("file size %d bytes exceeds limit of %d bytes", fileInfo.Size(), maxFileSize)
+	}
+
+	// Check for binary files (optional, basic heuristic)
+	if isBinaryFile(path) {
+		return true, "binary file detected"
+	}
+
+	return false, ""
+}
+
+// isBinaryFile performs a basic check to see if a file appears to be binary
+func isBinaryFile(path string) bool {
+	// Common binary extensions to skip
+	binaryExts := []string{
+		".exe", ".dll", ".so", ".dylib", ".a", ".o",
+		".zip", ".tar", ".gz", ".7z", ".rar",
+		".jpg", ".jpeg", ".png", ".gif", ".bmp", ".ico", ".svg",
+		".mp3", ".mp4", ".avi", ".mov", ".wmv",
+		".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+		".db", ".sqlite", ".mdb",
+		".bin", ".dat", ".iso",
+		".pyc", ".pyo", ".class",
+	}
+
+	ext := strings.ToLower(filepath.Ext(path))
+	for _, binExt := range binaryExts {
+		if ext == binExt {
+			return true
+		}
+	}
+
+	return false
+}
+
 // processBatch processes accumulated file changes and commits them as a batch
 func processBatch(cfg AppConfig) {
 	batchMutex.Lock()
 	defer batchMutex.Unlock()
+	processBatchInternal(cfg)
+}
 
+// processBatchInternal does the actual batch processing (assumes lock is held)
+func processBatchInternal(cfg AppConfig) {
 	if len(pendingFiles) == 0 {
 		return
 	}
@@ -137,6 +217,36 @@ func processBatch(cfg AppConfig) {
 	batchTimer = nil
 }
 
+// getDynamicBatchDuration calculates batch duration based on recent activity
+func getDynamicBatchDuration() time.Duration {
+	dynamicBatchMux.Lock()
+	defer dynamicBatchMux.Unlock()
+
+	// Reset counter every minute
+	if time.Since(lastEventReset) > time.Minute {
+		recentEventCount = 0
+		lastEventReset = time.Now()
+	}
+
+	recentEventCount++
+
+	// Calculate events per second in the last minute
+	eventsPerSecond := float64(recentEventCount) / time.Since(lastEventReset).Seconds()
+
+	// Adjust batch duration based on activity
+	// High activity (>5 events/sec): wait longer (5 seconds) to batch more
+	// Medium activity (1-5 events/sec): normal wait (2 seconds)
+	// Low activity (<1 event/sec): quick response (1 second)
+	switch {
+	case eventsPerSecond > 5:
+		return 5 * time.Second
+	case eventsPerSecond > 1:
+		return 2 * time.Second
+	default:
+		return 1 * time.Second
+	}
+}
+
 // addToBatch adds a file change to the pending batch and starts/resets the timer
 func addToBatch(cfg AppConfig, filePath, eventType string) {
 	batchMutex.Lock()
@@ -145,24 +255,39 @@ func addToBatch(cfg AppConfig, filePath, eventType string) {
 	// Add to pending files (this will overwrite if the same file has multiple events)
 	pendingFiles[filePath] = eventType
 
-	// Reset the timer
+	// Calculate dynamic batch duration
+	dynamicDuration := getDynamicBatchDuration()
+
+	// Reset the timer with dynamic duration
 	if batchTimer != nil {
 		batchTimer.Stop()
 	}
 
-	batchTimer = time.AfterFunc(batchDuration, func() {
+	batchTimer = time.AfterFunc(dynamicDuration, func() {
 		processBatch(cfg)
 	})
+
+	// Log when duration changes significantly
+	if dynamicDuration != batchDuration {
+		log.Printf("[BATCH] Adjusted batch window to %v based on activity", dynamicDuration)
+		batchDuration = dynamicDuration
+	}
 }
 
 // ForceProcessPendingBatch processes any pending batch changes before shutdown
 func ForceProcessPendingBatch(cfg AppConfig) {
 	batchMutex.Lock()
 	defer batchMutex.Unlock()
-	
+
+	// Stop any pending timer first
+	if batchTimer != nil {
+		batchTimer.Stop()
+		batchTimer = nil
+	}
+
 	if len(pendingFiles) > 0 {
 		log.Printf("[SHUTDOWN] Processing %d pending changes before exit", len(pendingFiles))
-		processBatch(cfg)
+		processBatchInternal(cfg) // Call internal version since we already hold the lock
 	}
 }
 
@@ -191,7 +316,7 @@ func CleanupWatcherState() {
 // WatchDirectory watches a directory and all subdirectories
 func WatchDirectory(ctx context.Context, cfg AppConfig) {
 	defer log.Println("[WATCHER] File watcher stopped")
-	
+
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		log.Fatal(err)
@@ -199,6 +324,25 @@ func WatchDirectory(ctx context.Context, cfg AppConfig) {
 	defer watcher.Close()
 
 	log.Printf("[WATCHER] Watching directory: %s", cfg.RootDir)
+
+	// Start cleanup goroutine for lastEventTime map
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				cleanupOldEventTimes()
+				eventTimeMutex.RLock()
+				mapSize := len(lastEventTime)
+				eventTimeMutex.RUnlock()
+				log.Printf("[WATCHER] Cleaned up old event times, map size: %d", mapSize)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 
 	// Recursively add existing directories
 	err = filepath.Walk(cfg.RootDir, func(path string, info os.FileInfo, err error) error {
@@ -242,6 +386,11 @@ func WatchDirectory(ctx context.Context, cfg AppConfig) {
 
 				if event.Op&fsnotify.Create == fsnotify.Create {
 					if debounceEvent(lastEventTime, event.Name, 500*time.Millisecond) {
+						// Check file size and type before processing
+						if skip, reason := shouldSkipFile(event.Name); skip {
+							log.Printf("[WATCHER] Skipping %s: %s", relPath, reason)
+							continue
+						}
 						addToBatch(cfg, relPath, "created")
 
 						// Check if the created path is a directory. If so, walk it and add all subdirectories to the watcher.
@@ -267,6 +416,11 @@ func WatchDirectory(ctx context.Context, cfg AppConfig) {
 					}
 				} else if event.Op&fsnotify.Write == fsnotify.Write {
 					if debounceEvent(lastEventTime, event.Name, 500*time.Millisecond) {
+						// Check file size and type before processing
+						if skip, reason := shouldSkipFile(event.Name); skip {
+							log.Printf("[WATCHER] Skipping %s: %s", relPath, reason)
+							continue
+						}
 						addToBatch(cfg, relPath, "modified")
 					}
 				} else if event.Op&fsnotify.Remove == fsnotify.Remove {

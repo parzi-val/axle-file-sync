@@ -2,18 +2,19 @@
 
 ## Critical Fixes (Do First)
 
-- [ ] Fix memory leak: Add cleanup routine for `lastEventTime` map in watcher.go
-- [ ] Add patch validation: Check for path traversal attacks before applying patches
+- [x] Fix memory leak: Add cleanup routine for `lastEventTime` map in watcher.go
+- [x] Add patch validation: Check for path traversal attacks before applying patches
 - [x] Fix race conditions: Add sequence numbers to SyncMetadata for patch ordering
-- [ ] Add Redis connection retry logic with exponential backoff
-- [ ] Implement graceful shutdown: Flush pending changes before exit
+- [x] Add Redis connection retry logic with exponential backoff
+- [x] Implement graceful shutdown: Flush pending changes before exit
 
 ## Performance Improvements
 
 - [x] Batch git operations: Collect changes for 2 seconds before committing
 - [ ] Add Redis connection pooling
 - [x] Optimize file watching: Skip temporary/swap files (.tmp, .swp, ~)
-- [ ] Add file size limits to prevent syncing huge files
+- [x] Add file size limits to prevent syncing huge files
+- [x] Add dynamic batch window based on activity (1-5 seconds)
 - [ ] Implement delta sync for large files
 
 ## Security Enhancements
@@ -38,7 +39,8 @@
 - [x] Persist Node-ID to prevent duplicate users in team status
 - [ ] Add progress indicators for large sync operations
 - [x] Implement file exclusion patterns (like .gitignore)
-- [ ] Add sync status dashboard/CLI command
+- [x] Add sync status dashboard/CLI command (stats command)
+- [x] Smart .gitignore auto-detection based on tech stack
 - [x] Create better logging with levels (DEBUG, INFO, ERROR)
 - [ ] Add configuration validation on startup
 
