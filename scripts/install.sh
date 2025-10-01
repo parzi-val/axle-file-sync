@@ -27,16 +27,23 @@ case "$OS" in
     *) echo "Unsupported OS: $OS"; exit 1 ;;
 esac
 
-BINARY_NAME="axle-${OS}-${ARCH}"
-DOWNLOAD_URL="https://github.com/$REPO/releases/download/v$VERSION/$BINARY_NAME"
+ARCHIVE_NAME="axle-${OS}-${ARCH}.tar.gz"
+DOWNLOAD_URL="https://github.com/$REPO/releases/download/v$VERSION/$ARCHIVE_NAME"
+TEMP_DIR=$(mktemp -d)
 
 # Create install directory
 mkdir -p "$INSTALL_DIR"
 
-# Download binary
+# Download and extract
 echo -e "\033[33mDownloading Axle v$VERSION for $OS/$ARCH...\033[0m"
-curl -sSL "$DOWNLOAD_URL" -o "$INSTALL_DIR/axle"
+curl -sSL "$DOWNLOAD_URL" -o "$TEMP_DIR/$ARCHIVE_NAME"
+
+echo -e "\033[33mExtracting...\033[0m"
+tar -xzf "$TEMP_DIR/$ARCHIVE_NAME" -C "$INSTALL_DIR"
 chmod +x "$INSTALL_DIR/axle"
+
+# Clean up
+rm -rf "$TEMP_DIR"
 
 echo -e "\033[32mInstalled to $INSTALL_DIR/axle\033[0m"
 

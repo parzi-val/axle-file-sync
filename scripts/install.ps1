@@ -16,15 +16,23 @@ if (!(Test-Path $installDir)) {
     New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 }
 
-# Download URL (update with actual release URL)
-$downloadUrl = "https://github.com/$repo/releases/download/v$version/$exeName"
+# Download URL for Windows zip
+$downloadUrl = "https://github.com/$repo/releases/download/v$version/axle-windows-amd64.zip"
+$zipPath = Join-Path $env:TEMP "axle-windows-amd64.zip"
 
 try {
     Write-Host "Downloading Axle v$version..." -ForegroundColor Yellow
-    $exePath = Join-Path $installDir $exeName
-    Invoke-WebRequest -Uri $downloadUrl -OutFile $exePath -UseBasicParsing
+    Invoke-WebRequest -Uri $downloadUrl -OutFile $zipPath -UseBasicParsing
 
-    Write-Host "Downloaded to $exePath" -ForegroundColor Green
+    Write-Host "Extracting..." -ForegroundColor Yellow
+    Expand-Archive -Path $zipPath -DestinationPath $installDir -Force
+
+    $exePath = Join-Path $installDir $exeName
+
+    # Clean up zip file
+    Remove-Item $zipPath -Force
+
+    Write-Host "Installed to $installDir" -ForegroundColor Green
 
     # Add to PATH if not already present
     $currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
