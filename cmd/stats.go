@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"axle/utils"
+	"github.com/parzi-val/axle-file-sync/utils"
 )
 
 // SyncStats holds statistics about the sync session

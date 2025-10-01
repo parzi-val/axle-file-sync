@@ -14,7 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/term"
-	"axle/utils"
+	"github.com/parzi-val/axle-file-sync/utils"
 )
 
 var (
@@ -177,7 +177,7 @@ func startRedisSubscriberWithPresence(ctx context.Context, cfg utils.AppConfig) 
 			case fmt.Sprintf("axle:team:%s", cfg.TeamID):
 				handleSyncMessage(cfg, msg.Payload)
 			case fmt.Sprintf("axle:chat:%s", cfg.TeamID):
-				handleChatMessage(msg.Payload)
+				handleChatMessage(cfg, msg.Payload)
 			case fmt.Sprintf("axle:presence:%s", cfg.TeamID):
 				utils.ProcessPresenceMessage(ctx, cfg, msg.Payload)
 			}
@@ -261,7 +261,7 @@ func handleSyncMessage(cfg utils.AppConfig, payload string) {
 }
 
 // handleChatMessage processes chat messages
-func handleChatMessage(payload string) {
+func handleChatMessage(cfg utils.AppConfig, payload string) {
 	var chatMsg utils.ChatMessage
 	if err := json.Unmarshal([]byte(payload), &chatMsg); err != nil {
 		log.Printf("[CHAT] Error unmarshaling chat message: %v", err)
@@ -269,7 +269,17 @@ func handleChatMessage(payload string) {
 	}
 
 	timestamp := time.Unix(chatMsg.Timestamp, 0).Format("15:04:05")
-	fmt.Printf("[CHAT %s] <%s> %s\n", timestamp, chatMsg.Sender, chatMsg.Message)
+
+	// Display the message with priority indicator if applicable
+	if chatMsg.Priority {
+		fmt.Printf("[CHAT %s] 🔔 <%s> %s\n", timestamp, chatMsg.Sender, chatMsg.Message)
+		// Send desktop notification for priority messages (but not for our own messages)
+		if chatMsg.Sender != cfg.Username {
+			utils.SendChatNotification(chatMsg.Sender, chatMsg.Message)
+		}
+	} else {
+		fmt.Printf("[CHAT %s] <%s> %s\n", timestamp, chatMsg.Sender, chatMsg.Message)
+	}
 }
 
 func init() {

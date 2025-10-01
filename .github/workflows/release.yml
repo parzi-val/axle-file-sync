@@ -1,0 +1,73 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: Build binaries
+        run: |
+          # Windows
+          GOOS=windows GOARCH=amd64 go build -o axle.exe
+          zip axle-windows-amd64.zip axle.exe
+
+          # macOS Intel
+          GOOS=darwin GOARCH=amd64 go build -o axle
+          tar czf axle-darwin-amd64.tar.gz axle
+
+          # macOS ARM
+          GOOS=darwin GOARCH=arm64 go build -o axle
+          tar czf axle-darwin-arm64.tar.gz axle
+
+          # Linux AMD64
+          GOOS=linux GOARCH=amd64 go build -o axle
+          tar czf axle-linux-amd64.tar.gz axle
+
+          # Linux ARM64
+          GOOS=linux GOARCH=arm64 go build -o axle
+          tar czf axle-linux-arm64.tar.gz axle
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            axle-windows-amd64.zip
+            axle-darwin-amd64.tar.gz
+            axle-darwin-arm64.tar.gz
+            axle-linux-amd64.tar.gz
+            axle-linux-arm64.tar.gz
+          body: |
+            ## Installation
+
+            ### Windows
+            ```powershell
+            irm https://raw.githubusercontent.com/${{ github.repository }}/main/scripts/install.ps1 | iex
+            ```
+
+            ### macOS/Linux
+            ```bash
+            curl -sSL https://raw.githubusercontent.com/${{ github.repository }}/main/scripts/install.sh | bash
+            ```
+
+            ### Manual Download
+            Download the appropriate binary for your platform below.
+
+            ## What's New
+            See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
+
+          draft: false
+          prerelease: false

@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"axle/utils"
+	"github.com/parzi-val/axle-file-sync/utils"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/term"

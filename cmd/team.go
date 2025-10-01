@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"axle/utils"
+	"github.com/parzi-val/axle-file-sync/utils"
 )
 
 // teamCmd represents the team command

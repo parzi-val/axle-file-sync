@@ -1,7 +1,7 @@
 package main
 
 import (
-	"axle/cmd"
+	"github.com/parzi-val/axle-file-sync/cmd"
 )
 
 func main() {

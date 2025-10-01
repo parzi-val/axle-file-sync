@@ -8,6 +8,7 @@ type ChatMessage struct {
 	Sender    string `json:"sender"`    // Username of the sender
 	Message   string `json:"message"`   // The chat message content
 	Timestamp int64  `json:"timestamp"` // Unix timestamp of when the message was sent
+	Priority  bool   `json:"priority"`  // If true, triggers desktop notification
 }
 
 // AxleConfig defines the structure for configuration stored in Redis.

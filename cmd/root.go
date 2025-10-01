@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
-	"axle/utils"
+	"github.com/parzi-val/axle-file-sync/utils"
 )
 
 var (

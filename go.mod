@@ -1,4 +1,4 @@
-module axle
+module github.com/parzi-val/axle-file-sync
 
 go 1.24.0
 

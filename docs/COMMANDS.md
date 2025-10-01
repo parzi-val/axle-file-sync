@@ -136,37 +136,6 @@ axle stats
 
 ---
 
-### `axle ignore`
-Manage ignored file patterns.
-
-```bash
-axle ignore <action> [pattern]
-```
-
-**Actions:**
-- `add <pattern>` - Add a pattern to ignore list
-- `remove <pattern>` - Remove a pattern from ignore list
-- `list` - Show all ignored patterns
-- `auto` - Auto-detect and configure based on project type
-
-**Examples:**
-```bash
-axle ignore add "*.log"        # Ignore all log files
-axle ignore add "node_modules" # Ignore node_modules directory
-axle ignore list               # Show all ignored patterns
-axle ignore auto               # Auto-configure for detected stack
-```
-
-**Auto-detection supports:**
-- Node.js/JavaScript projects
-- Python projects
-- Go projects
-- Rust projects
-- Java projects
-- Ruby projects
-- .NET projects
-
----
 
 ### `axle help`
 Display help information.
@@ -295,7 +264,7 @@ axle chat "Need help with the API integration!"
 
 **"File size exceeds limit"**
 - Default limit is 10MB per file
-- Add large files to ignore list: `axle ignore add "*.mp4"`
+- Add large files to .gitignore
 - Binary files are automatically skipped
 
 **Performance Issues**
@@ -311,7 +280,7 @@ axle chat "Need help with the API integration!"
 2. **Designate authoritative sources**: Team lead can use `--conflict mine` for critical files
 3. **Use chat actively**: `axle chat` helps coordinate changes
 4. **Monitor presence**: `axle team` shows who's actively working
-5. **Auto-configure ignores**: Run `axle ignore auto` to detect your stack
+5. **Configure .gitignore**: Axle automatically detects your stack and configures .gitignore on init
 6. **Graceful shutdown**: Always use Ctrl+C to ensure pending changes are synced
 
 ---
