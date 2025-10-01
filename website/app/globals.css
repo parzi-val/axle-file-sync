@@ -1,0 +1,50 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg-dark: 10, 10, 10;
+    --border: 255, 255, 255;
+  }
+
+  * {
+    @apply border-white/10;
+  }
+
+  body {
+    @apply bg-dark;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-white/20 rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-white/30;
+  }
+
+  /* Selection */
+  ::selection {
+    @apply bg-white text-black;
+  }
+
+  /* Code blocks */
+  pre {
+    @apply text-sm leading-relaxed;
+  }
+
+  code {
+    @apply text-neutral-100;
+  }
+}
