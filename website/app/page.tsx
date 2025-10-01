@@ -521,8 +521,23 @@ function Documentation() {
             <p className="text-sm text-neutral-300 mb-4">Other team members join using the same team name and password.</p>
             <div className="bg-black/50 border border-white/10 rounded p-4 overflow-x-auto">
               <code className="text-sm whitespace-nowrap">
-                <span className="text-green-400">axle join</span> <span className="text-blue-400">--team</span> hackathon-2024 <span className="text-blue-400">--username</span> bob <span className="text-blue-400">--password</span> secret123
+                <span className="text-green-400">axle join</span> <span className="text-blue-400">--team</span> hackathon-2024 <span className="text-blue-400">--username</span> bob <span className="text-blue-400">--password</span> secret123 <span className="text-blue-400">--host</span> leader-ip:6379
               </code>
+            </div>
+          </div>
+
+          <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-4 mt-6">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-amber-400 mt-0.5 flex-shrink-0" />
+              <div className="text-sm text-amber-300">
+                <strong>Network Configuration:</strong> All team members must:
+                <ul className="mt-2 space-y-1 text-xs text-amber-300/80 list-disc list-inside">
+                  <li>Be on the same LAN/network (or use VPN/tunneling)</li>
+                  <li>Connect to the <strong>leader's Redis instance</strong> using <code className="bg-black/30 px-1 py-0.5 rounded">--host leader-ip:6379</code></li>
+                  <li>Example: If leader's IP is 192.168.1.100, team members use <code className="bg-black/30 px-1 py-0.5 rounded">--host 192.168.1.100:6379</code></li>
+                  <li>Leader can find their IP: Windows: <code className="bg-black/30 px-1 py-0.5 rounded">ipconfig</code>, Mac/Linux: <code className="bg-black/30 px-1 py-0.5 rounded">ifconfig</code></li>
+                </ul>
+              </div>
             </div>
           </div>
         </div>
