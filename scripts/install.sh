@@ -4,7 +4,7 @@
 
 set -e
 
-VERSION="0.1.0"
+VERSION="0.1.1"
 REPO="parzi-val/axle-file-sync"
 INSTALL_DIR="$HOME/.local/bin"
 

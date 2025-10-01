@@ -6,7 +6,7 @@ $ErrorActionPreference = "Stop"
 Write-Host "Installing Axle File Sync..." -ForegroundColor Cyan
 
 # Configuration
-$version = "0.1.0"
+$version = "0.1.1"
 $repo = "parzi-val/axle-file-sync"
 $installDir = "$env:LOCALAPPDATA\Axle"
 $exeName = "axle.exe"
@@ -33,6 +33,27 @@ try {
     Remove-Item $zipPath -Force
 
     Write-Host "Installed to $installDir" -ForegroundColor Green
+
+    # Add to Windows registry for Add/Remove Programs
+    Write-Host "Registering with Windows..." -ForegroundColor Yellow
+    $uninstallKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Axle"
+
+    if (!(Test-Path $uninstallKey)) {
+        New-Item -Path $uninstallKey -Force | Out-Null
+    }
+
+    Set-ItemProperty -Path $uninstallKey -Name "DisplayName" -Value "Axle File Sync"
+    Set-ItemProperty -Path $uninstallKey -Name "DisplayVersion" -Value $version
+    Set-ItemProperty -Path $uninstallKey -Name "Publisher" -Value "parzi-val"
+    Set-ItemProperty -Path $uninstallKey -Name "InstallLocation" -Value $installDir
+    Set-ItemProperty -Path $uninstallKey -Name "UninstallString" -Value "powershell.exe -ExecutionPolicy Bypass -File `"$installDir\uninstall.ps1`""
+    Set-ItemProperty -Path $uninstallKey -Name "DisplayIcon" -Value "$exePath,0"
+    Set-ItemProperty -Path $uninstallKey -Name "EstimatedSize" -Value 10240  # Size in KB
+    Set-ItemProperty -Path $uninstallKey -Name "NoModify" -Value 1
+    Set-ItemProperty -Path $uninstallKey -Name "NoRepair" -Value 1
+    Set-ItemProperty -Path $uninstallKey -Name "URLInfoAbout" -Value "https://github.com/$repo"
+
+    Write-Host "Registered in Add/Remove Programs" -ForegroundColor Green
 
     # Add to PATH if not already present
     $currentPath = [Environment]::GetEnvironmentVariable("Path", "User")

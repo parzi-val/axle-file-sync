@@ -7,8 +7,8 @@ import (
 )
 
 const (
-	Version   = "0.1.0"
-	BuildDate = "2024-01-30"
+	Version   = "0.1.1"
+	BuildDate = "2024-10-01"
 )
 
 var versionCmd = &cobra.Command{

@@ -21,9 +21,10 @@ jobs:
 
       - name: Build binaries
         run: |
-          # Windows
+          # Windows (includes uninstall script)
           GOOS=windows GOARCH=amd64 go build -o axle.exe
-          zip axle-windows-amd64.zip axle.exe
+          cp scripts/uninstall-local.ps1 uninstall.ps1
+          zip axle-windows-amd64.zip axle.exe uninstall.ps1
 
           # macOS Intel
           GOOS=darwin GOARCH=amd64 go build -o axle
